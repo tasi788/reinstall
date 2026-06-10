@@ -456,6 +456,7 @@ bash reinstall.sh windows \
 #### 可选参数
 
 - `--username USERNAME` 设置用户名
+  - Windows 本地账号名称不能超过 20 个字符
 - `--password PASSWORD` 设置密码
 - `--rdp-port PORT` 修改 RDP 端口
 - `--ssh-port PORT` 修改 SSH 端口（安装期间观察日志用）

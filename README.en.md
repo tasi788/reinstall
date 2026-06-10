@@ -456,6 +456,7 @@ bash reinstall.sh windows \
 #### Optional Parameters
 
 - `--username USERNAME` Set Username
+  - Windows local account names must be 20 characters or fewer.
 - `--password PASSWORD` Set Password
 - `--rdp-port PORT` Change RDP port
 - `--ssh-port PORT` Change SSH port (for log observation during installation only)

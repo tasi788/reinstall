@@ -2404,6 +2404,10 @@ assert_username_valid() {
     if grep -q '[][/\:|<>+=;,?*%@]' <<<"$username"; then
         error_and_exit "Username: Do not use any of the following characters: / \ [ ] : | < > + = ; , ? * % @"
     fi
+
+    if [ "$distro" = windows ] && ! is_administrator_username "$username" && [ "${#username}" -gt 20 ]; then
+        error_and_exit "Username: Windows local account names must be 20 characters or fewer."
+    fi
 }
 
 # trans.sh 有同名方法
