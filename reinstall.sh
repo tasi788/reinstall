@@ -114,6 +114,7 @@ Usage: $reinstall_____ anolis      7|8|23
                        [--allow-ping]
                        [--rdp-port    PORT]
                        [--add-driver  INF_OR_DIR]
+                       [--software    WINGET_PACKAGE_LIST]
 
 Manual: https://github.com/bin456789/reinstall
 
@@ -320,6 +321,20 @@ is_digit() {
 
 is_port_valid() {
     is_digit "$1" && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
+}
+
+assert_software_valid() {
+    local package
+
+    if [ -z "$software" ]; then
+        error_and_exit "Software: Can not be empty."
+    fi
+
+    for package in $software; do
+        if ! [[ "$package" =~ ^[A-Za-z0-9._+-]+$ ]]; then
+            error_and_exit "Software package '$package' is invalid. Use whitespace-separated winget package ids or queries."
+        fi
+    done
 }
 
 get_host_by_url() {
@@ -3209,7 +3224,7 @@ build_extra_cmdline() {
     # https://salsa.debian.org/installer-team/rootskel/-/blob/master/src/lib/debian-installer-startup.d/S02module-params?ref_type=heads
     for key in confhome hold force_boot_mode force_cn force_old_windows_setup cloud_image main_disk \
         elts deb_mirror \
-        username ssh_port rdp_port web_port allow_ping; do
+        username ssh_port rdp_port web_port allow_ping software; do
         value=${!key}
         if [ -n "$value" ]; then
             is_need_quote "$value" &&
@@ -4420,6 +4435,7 @@ fi
 long_opts=
 for o in ci installer debug minimal allow-ping force-cn help \
     add-driver: \
+    software: \
     hold: sleep: \
     iso: \
     image-name: \
@@ -4692,6 +4708,16 @@ EOF
             error_and_exit "Can't find inf files in $2"
         fi
 
+        shift 2
+        ;;
+    --software)
+        [ -n "$2" ] || error_and_exit "Need value for $1"
+        if [ -n "$software" ]; then
+            software="$software $(printf "%s" "$2" | trim)"
+        else
+            software="$(printf "%s" "$2" | trim)"
+        fi
+        assert_software_valid
         shift 2
         ;;
     --force-old-windows-setup)
@@ -5076,6 +5102,7 @@ elif [ "$distro" = windows ]; then
     fi
     echo "Password: $password"
     echo "RDP Port: $rdp_port"
+    [ -n "$software" ] && echo "Software: $software"
 
 elif [ "$distro" = dd ]; then
     info "While Install (View Logs)"

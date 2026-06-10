@@ -464,6 +464,9 @@ bash reinstall.sh windows \
 - `--add-driver INF_OR_DIR` Add additional driver, specifying .inf path, or the folder contains .inf file.
   - The driver must be downloaded to current system first.
   - This parameter can be set multiple times to add different driver.
+- `--software WINGET_PACKAGE_LIST` Run `winget install` automatically after the first desktop logon. Separate multiple packages with spaces, for example `--software "Telegram.TelegramDesktop Google.Chrome"`.
+  - Winget package ids are recommended. Plain queries are tried as exact ids first, then as winget search/install queries.
+  - The install log is saved to `C:\windows-install-software.log`.
 - `--frpc-config PATH` Add frpc for intranet tunneling. Parameter can be local filepath or HTTP URL of the configuration file.
 - `--hold 1` Reboot only into install environment, without running installer, only for SSH connect to test network connection.
 - `--hold 2` Allow SSH connections for modifying `boot.wim`, `install.wim` or other contents before rebooting into the official Windows installation program, with the disk mounted at `/os`.

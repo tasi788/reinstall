@@ -502,6 +502,16 @@ extract_env_from_cmdline() {
     web_port=${web_port:-80}
 }
 
+assert_software_valid() {
+    local package
+
+    for package in $software; do
+        if ! echo "$package" | grep -Eq '^[A-Za-z0-9._+-]+$'; then
+            error_and_exit "Software package '$package' is invalid. Use whitespace-separated winget package ids or queries."
+        fi
+    done
+}
+
 ensure_service_started() {
     local service=$1
 
@@ -3379,7 +3389,13 @@ EOF
         bats="$bats windows-set-user-password-never-expires.bat"
     fi
 
-    # 6. frp
+    # 6. 首次登录后使用 winget 安装软件
+    if [ -n "$software" ]; then
+        create_win_install_software_script $os_dir/windows-install-software.bat
+        bats="$bats windows-install-software.bat"
+    fi
+
+    # 7. frp
     if ls /configs/frpc.* >/dev/null 2>&1; then
         if [ "$(get_windows_arch_from_windows_drive "$os_dir" | to_lower)" = x86 ]; then
             os_bit=32
@@ -6115,6 +6131,78 @@ create_win_change_rdp_port_script() {
 
     echo "set RdpPort=$rdp_port" >$target
     wget $confhome/windows-change-rdp-port.bat -O- >>$target
+    unix2dos $target
+}
+
+create_win_install_software_script() {
+    target=$1
+    package_list=$(dirname "$target")/windows-install-software.txt
+    local package
+
+    info "Create win install software script"
+    assert_software_valid
+
+    : >$package_list
+    for package in $software; do
+        echo "$package" >>$package_list
+    done
+    unix2dos $package_list
+
+    cat <<'EOF' >$target
+@echo off
+setlocal EnableExtensions DisableDelayedExpansion
+
+set "Log=%SystemDrive%\windows-install-software.log"
+
+if /i "%~1"=="install" goto install
+
+echo [%DATE% %TIME%] Register winget RunOnce. >>"%Log%"
+reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" /v "ReinstallInstallSoftware" /t REG_SZ /d "cmd /c %SystemDrive%\windows-install-software.bat install" /f >>"%Log%" 2>&1
+exit /b 0
+
+:install
+echo [%DATE% %TIME%] Start winget installs. >>"%Log%"
+call :waitWinget
+if errorlevel 1 (
+    echo [%DATE% %TIME%] winget not found. >>"%Log%"
+    exit /b 1
+)
+
+winget source update --accept-source-agreements >>"%Log%" 2>&1
+
+for /f "usebackq delims=" %%P in ("%SystemDrive%\windows-install-software.txt") do (
+    if not "%%P"=="" call :installPackage "%%P"
+)
+
+echo [%DATE% %TIME%] Finished winget installs. >>"%Log%"
+del "%SystemDrive%\windows-install-software.txt" >nul 2>&1
+del "%~f0" >nul 2>&1
+exit /b 0
+
+:waitWinget
+for /l %%I in (1,1,30) do (
+    winget --version >>"%Log%" 2>&1 && exit /b 0
+    powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe" >>"%Log%" 2>&1
+    winget --version >>"%Log%" 2>&1 && exit /b 0
+    timeout /t 20 /nobreak >nul 2>&1 || ping -n 21 127.0.0.1 >nul 2>&1
+)
+exit /b 1
+
+:installPackage
+set "Package=%~1"
+echo [%DATE% %TIME%] Installing %Package%. >>"%Log%"
+winget install --id "%Package%" --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity >>"%Log%" 2>&1
+if errorlevel 1 (
+    winget install "%Package%" --silent --accept-package-agreements --accept-source-agreements --disable-interactivity >>"%Log%" 2>&1
+)
+if errorlevel 1 (
+    echo [%DATE% %TIME%] Failed %Package%. >>"%Log%"
+) else (
+    echo [%DATE% %TIME%] Installed %Package%. >>"%Log%"
+)
+exit /b 0
+EOF
+
     unix2dos $target
 }
 
