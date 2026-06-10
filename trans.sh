@@ -6135,8 +6135,8 @@ create_win_change_rdp_port_script() {
 }
 
 create_win_install_software_script() {
-    target=$1
-    package_list=$(dirname "$target")/windows-install-software.txt
+    script_path=$1
+    package_list=$(dirname "$script_path")/windows-install-software.txt
     local package
 
     info "Create win install software script"
@@ -6148,7 +6148,7 @@ create_win_install_software_script() {
     done
     unix2dos $package_list
 
-    cat <<'EOF' >$target
+    cat <<'EOF' >$script_path
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
 
@@ -6203,7 +6203,7 @@ if errorlevel 1 (
 exit /b 0
 EOF
 
-    unix2dos $target
+    unix2dos $script_path
 }
 
 # virt-what 要用最新版
