@@ -84,12 +84,12 @@ Usage: $reinstall_____ anolis      7|8|23
                        centos      9|10
                        fnos        1
                        fygoos      1
-                       nixos       25.11
+                       nixos       26.05
                        fedora      43|44
                        debian      9|10|11|12|13
                        opensuse    16.0|tumbleweed
                        openeuler   20.03|22.03|24.03
-                       alpine      3.20|3.21|3.22|3.23
+                       alpine      3.21|3.22|3.23|3.24
                        ubuntu      18.04|20.04|22.04|24.04|26.04 [--minimal]
                        kali
                        arch
@@ -1936,10 +1936,10 @@ verify_os_name() {
         'fnos        1' \
         'fygoos      1' \
         'fedora      43|44' \
-        'nixos       25.11' \
+        'nixos       26.05' \
         'debian      9|10|11|12|13' \
         'opensuse    16.0|tumbleweed' \
-        'alpine      3.20|3.21|3.22|3.23' \
+        'alpine      3.21|3.22|3.23|3.24' \
         'openeuler   20.03|22.03|24.03' \
         'ubuntu      18.04|20.04|22.04|24.04|26.04' \
         'redhat' \
@@ -3081,8 +3081,53 @@ install_grub_win() {
     # 下载 grub
     info download grub
 
-    # arm64 模块要单独下载，要注意版本匹配
-    grub_ver=2.06
+    # https://wuyou.net/forum.php?mod=viewthread&tid=449379&extra=page%3D1&page=2
+
+    # 2.14
+    # efi  正常
+    # bios 报错 ld.gold bug https://lists.gnu.org/archive/html/grub-devel/2026-01/msg00041.html
+    #      替换成 alpine/arch 的模块后，出现 ntfs 读取 out of range 错误
+
+    # 2.12
+    # efi  报错 __stack_chk_guard https://lists.gnu.org/archive/html/bug-grub/2024-01/msg00002.html
+    #      替换成 alpine/arch 的模块后，正常
+    # bios 正常
+
+    # 2.06
+    # 一切正常
+
+    # 要使用的 grub 版本
+    if is_efi; then
+        local grub_ver=2.14
+    else
+        local grub_ver=2.12
+    fi
+
+    # grub 对应的 alpine 版本
+    case "$grub_ver" in
+    2.06) local alpine_ver=3.19 ;;
+    2.12) local alpine_ver=3.23 ;;
+    2.14) local alpine_ver=3.24 ;;
+    esac
+
+    # grub 架构名和对应的 alpine 包名
+    if is_efi; then
+        local alpine_grub_pkg=grub-efi
+        case "$basearch" in
+        x86_64) local grub_arch=x86_64-efi ;;
+        aarch64) local grub_arch=arm64-efi ;;
+        esac
+    else
+        local alpine_grub_pkg=grub-bios
+        local grub_arch=i386-pc
+    fi
+
+    # 是否需要从 alpine 获取/替换 grub 模块
+    # arm64-efi 要从 alpine 下载 grub 模块
+    local need_download_grub_module_from_alpine=false
+    if [ "$grub_arch" = arm64-efi ]; then
+        need_download_grub_module_from_alpine=true
+    fi
 
     # ftpmirror.gnu.org 是 geoip 重定向，不是 cdn
     # 有可能重定义到一个拉黑了部分 IP 的服务器
@@ -3096,6 +3141,13 @@ install_grub_win() {
     grub_dir=$tmp/grub-$grub_ver-for-windows
     grub=$grub_dir/grub
 
+    # 下载/替换 grub 模块
+    if $need_download_grub_module_from_alpine; then
+        info 'download grub modules from alpine'
+        download_and_extract_apk $alpine_ver $alpine_grub_pkg $tmp/grub-from-alpine
+        cp -r $tmp/grub-from-alpine/usr/lib/grub/$grub_arch/ $grub_dir
+    fi
+
     # 设置 grub 包含的模块
     # 原系统是 windows，因此不需要 ext2 lvm xfs btrfs
     grub_modules+=" normal minicmd serial ls echo test cat reboot halt linux chain search all_video configfile"
@@ -3106,6 +3158,7 @@ install_grub_win() {
 
     # 设置 grub prefix 为c盘根目录
     # 运行 grub-probe 会改变cmd窗口字体
+    local prefix
     prefix=$($grub-probe -t drive $c: | sed 's|.*PhysicalDrive|(hd|' | del_cr)/
     echo $prefix
 
@@ -3114,22 +3167,8 @@ install_grub_win() {
         # efi
         info install grub for efi
 
-        case "$basearch" in
-        x86_64) grub_arch=x86_64 ;;
-        aarch64) grub_arch=arm64 ;;
-        esac
-
-        # 下载 grub arm64 模块
-        # 注意要匹配 grub-for-windows 版本
-        if ! [ -d $grub_dir/grub/$grub_arch-efi ]; then
-            # 3.20 是 grub 2.12，可能会有问题
-            alpine_ver=3.19
-            download_and_extract_apk $alpine_ver grub-efi $tmp/grub-efi
-            cp -r $tmp/grub-efi/usr/lib/grub/$grub_arch-efi/ $grub_dir
-        fi
-
         grub_efi=$(get_grub_efi_filename)
-        $grub-mkimage -p $prefix -O $grub_arch-efi -o "$(cygpath -w "$grub_dir/$grub_efi")" $grub_modules
+        $grub-mkimage -p $prefix -O $grub_arch -o "$(cygpath -w "$grub_dir/$grub_efi")" $grub_modules
         add_efi_entry_in_windows "$grub_dir/$grub_efi"
     else
         # bios
@@ -3149,20 +3188,20 @@ install_grub_win() {
 
             # g2ldr
             # 配置文件 c:\grub.cfg
-            $grub-mkimage -p "$prefix" -O i386-pc -o "$(cygpath -w $grub_dir/core.img)" $grub_modules
-            cat $grub_dir/i386-pc/lnxboot.img $grub_dir/core.img >/cygdrive/$c/g2ldr
+            $grub-mkimage -p "$prefix" -O $grub_arch -o "$(cygpath -w $grub_dir/core.img)" $grub_modules
+            cat $grub_dir/$grub_arch/lnxboot.img $grub_dir/core.img >/cygdrive/$c/g2ldr
         else
             # grub-install 无法设置 prefix
             # 配置文件 c:\grub\grub.cfg
             $grub-install $c \
-                --target=i386-pc \
+                --target=$grub_arch \
                 --boot-directory=$c: \
                 --install-modules="$grub_modules" \
                 --themes= \
                 --fonts= \
                 --no-bootsector
 
-            cat $grub_dir/i386-pc/lnxboot.img /cygdrive/$c/grub/i386-pc/core.img >/cygdrive/$c/g2ldr
+            cat $grub_dir/$grub_arch/lnxboot.img /cygdrive/$c/grub/$grub_arch/core.img >/cygdrive/$c/g2ldr
         fi
 
         # 添加引导

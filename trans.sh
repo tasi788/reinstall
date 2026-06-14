@@ -117,6 +117,16 @@ show_url_in_args() {
     done
 }
 
+killall() {
+    # killall 是异步的，要等一下
+    local ret=0
+    if ! command killall "$@"; then
+        ret=$?
+    fi
+    sleep 5
+    return $ret
+}
+
 # 在没有设置 set +o pipefail 的情况下，限制下载大小：
 # retry 5 command wget | head -c 1048576 会触发 retry，下载 5 次
 # command wget "$@" --tries=5 | head -c 1048576 不会触发 wget 自带的 retry，只下载 1 次
@@ -214,6 +224,34 @@ create_alpine_rootfs() {
     fi
 }
 
+create_alpine_rootfs_with_arch_install_scripts() {
+    local os_dir=$1
+    local init_now=${2:-false}
+    local parent_os_dir=$3
+
+    create_alpine_rootfs "$os_dir" $init_now
+
+    # 将 alpine-base 的依赖写入 world，再删除 alpine-base alpine-conf
+    # --installed --depends 顺序不能错
+    # 不添加 --installed 则会同时显示已安装的和最新版的
+    alpine_base_depends=$(chroot "$os_dir" apk info --installed --depends alpine-base | sed '/depends on:/d')
+    chroot "$os_dir" apk add $alpine_base_depends
+    chroot "$os_dir" apk del alpine-base alpine-conf
+    chroot "$os_dir" apk add arch-install-scripts
+
+    if [ -n "$parent_os_dir" ]; then
+        mkdir -p "$os_dir/parent"
+        mount --rbind "$parent_os_dir" "$os_dir/parent"
+    fi
+}
+
+remove_alpine_rootfs() {
+    local os_dir=$1
+
+    umount_pseudo_fs "$os_dir"
+    rm -rf "$os_dir"
+}
+
 download_via_browser() {
     local url=$1
     local path=$2
@@ -242,8 +280,7 @@ download_via_browser() {
     cp "$os_dir/work/download_file" "$path"
 
     # 清理
-    umount_pseudo_fs "$os_dir"
-    rm -rf "$os_dir"
+    remove_alpine_rootfs "$os_dir"
 }
 
 download() {
@@ -380,7 +417,7 @@ setup_websocketd() {
     wget $confhome/logviewer.html -O /tmp/index.html
     apk add coreutils
 
-    pkill websocketd || true
+    killall -q websocketd || true
     # websocketd 遇到 \n 才推送，因此要转换 \r 为 \n
     websocketd --port "$web_port" --loglevel=fatal --staticdir=/tmp \
         stdbuf -oL -eL sh -c "tail -fn+0 /reinstall.log | tr '\r' '\n' | grep -Fiv -e password -e token" &
@@ -579,9 +616,8 @@ clear_previous() {
     fi
     disconnect_qcow
     # 安装 arch 有 gpg-agent 进程驻留
-    killall gpg-agent || true
     # 在 aria2c 下载时手动中止脚本，aria2c 还会在后台下载
-    killall aria2c || true
+    killall -q gpg-agent aria2c || true
     rc-service -q --ifexists --ifstarted nix-daemon stop
     swapoff -a
     umount_all
@@ -892,7 +928,7 @@ get_windows_version_from_windows_drive() {
     # CurrentMajorVersionNumber  10
     # CurrentMinorVersionNumber   0
 
-    apk add hivex
+    apk add hivex-perl
     hive=$(find_file_ignore_case $os_dir/Windows/System32/config/SOFTWARE)
 
     get_current_version_key() {
@@ -929,7 +965,7 @@ get_windows_version_from_windows_drive() {
     fi
 
     echo "Version: $nt_ver.$build_ver.$rev_ver" >&2
-    apk del hivex
+    apk del hivex-perl
 }
 
 is_elts() {
@@ -1646,6 +1682,20 @@ install_alpine() {
         set_ssh_keys_and_del_password /os
     fi
 
+    # alpine 3.24+
+    # 要从 /etc/inittab 删除多余的 tty0
+    # 否则开机时 vnc 会有两个登录提示，一个是 tty0，一个是 tty1
+
+    # sed 找到 # enable login on alternative console 的行
+    # 用 N 读取下一行到当前空间
+    # 再匹配 \ntty0:
+    sed -i '
+/^# enable login on alternative console$/{
+    N
+    /\ntty0:/d
+}
+' /os/etc/inittab
+
     # 下载 fix-eth-name
     download "$confhome/fix-eth-name.sh" /os/fix-eth-name.sh
     download "$confhome/fix-eth-name.initd" /os/etc/init.d/fix-eth-name
@@ -1723,7 +1773,7 @@ add_newline() {
 install_nixos() {
     info "Install NixOS"
 
-    os_dir=/os
+    local os_dir=/os
     keep_swap=true
     nix_from=website
     ram_per_thread=2048
@@ -1813,9 +1863,9 @@ install_nixos() {
         fi
 
         # 备用方案
-        # 1. 从 https://mirror.nju.edu.cn/nix-channels/nixos-25.11/nixexprs.tar.xz 获取
-        #    https://github.com/NixOS/nixpkgs/blob/nixos-25.11/pkgs/tools/package-management/nix/default.nix
-        #    https://github.com/NixOS/nixpkgs/blob/nixos-25.11/nixos/modules/installer/tools/nix-fallback-paths.nix
+        # 1. 从 https://mirror.nju.edu.cn/nix-channels/nixos-26.05/nixexprs.tar.xz 获取
+        #    https://github.com/NixOS/nixpkgs/blob/nixos-26.05/pkgs/tools/package-management/nix/default.nix
+        #    https://github.com/NixOS/nixpkgs/blob/nixos-26.05/nixos/modules/installer/tools/nix-fallback-paths.nix
         # 2. 安装最新版 nix，添加 nixos channel 后获取
         #    nix eval -f '<nixpkgs>' --raw 'nixVersions.stable.version' --extra-experimental-features nix-command
 
@@ -2158,7 +2208,7 @@ get_fs_of_mount_point() {
 }
 
 basic_init() {
-    os_dir=$1
+    local os_dir=$1
 
     # 此时不能用
     # chroot $os_dir timedatectl set-timezone Asia/Shanghai
@@ -2238,35 +2288,41 @@ install_arch_gentoo_aosc() {
         # 添加 swap
         create_swap_if_ram_less_than 1024 $os_dir/swapfile
 
-        apk add arch-install-scripts
+        if false; then
+            local alpine_rootfs=/
+            apk add arch-install-scripts
+        else
+            local alpine_rootfs=$os_dir/alpine
+            create_alpine_rootfs_with_arch_install_scripts "$alpine_rootfs" true "$os_dir"
+        fi
 
         # 为了二次运行时 /etc/pacman.conf 未修改
-        if [ -f /etc/pacman.conf.orig ]; then
-            cp /etc/pacman.conf.orig /etc/pacman.conf
+        if [ -f $alpine_rootfs/etc/pacman.conf.orig ]; then
+            cp $alpine_rootfs/etc/pacman.conf.orig $alpine_rootfs/etc/pacman.conf
         else
-            cp /etc/pacman.conf /etc/pacman.conf.orig
+            cp $alpine_rootfs/etc/pacman.conf $alpine_rootfs/etc/pacman.conf.orig
         fi
 
         # 设置 repo
-        insert_into_file /etc/pacman.conf before '\[core\]' <<EOF
+        insert_into_file $alpine_rootfs/etc/pacman.conf before '\[core\]' <<EOF
 SigLevel = Never
 ParallelDownloads = 5
 EOF
-        cat <<EOF >>/etc/pacman.conf
+        cat <<EOF >>$alpine_rootfs/etc/pacman.conf
 [core]
 Include = /etc/pacman.d/mirrorlist
 
 [extra]
 Include = /etc/pacman.d/mirrorlist
 EOF
-        mkdir -p /etc/pacman.d
+        mkdir -p $alpine_rootfs/etc/pacman.d
         # shellcheck disable=SC2016
         case "$(uname -m)" in
         x86_64) dir='$repo/os/$arch' ;;
         aarch64) dir='$arch/$repo' ;;
         esac
         # shellcheck disable=SC2154
-        echo "Server = $mirror/$dir" >/etc/pacman.d/mirrorlist
+        echo "Server = $mirror/$dir" >$alpine_rootfs/etc/pacman.d/mirrorlist
 
         # 安装系统
         # 要安装分区工具(包含 fsck.xxx)，用于 initramfs 检查分区数据
@@ -2291,7 +2347,17 @@ EOF
             pkgs="$pkgs sudo"
         fi
 
-        pacstrap -K $os_dir $pkgs
+        # retry 防止网络问题
+        if [ "$alpine_rootfs" = / ]; then
+            retry 5 pacstrap -K "$os_dir" $pkgs
+            killall -q gpg-agent || true
+            apk del arch-install-scripts
+        else
+            retry 5 chroot "$alpine_rootfs" pacstrap -K "/parent" $pkgs
+            killall -q gpg-agent || true
+            umount -R "$alpine_rootfs/parent"
+            remove_alpine_rootfs "$alpine_rootfs"
+        fi
 
         # dns
         cp_resolv_conf $os_dir
@@ -2498,7 +2564,7 @@ EOF
         chroot $os_dir update-initramfs
     }
 
-    os_dir=/os
+    local os_dir=/os
 
     # 挂载分区
     mount_part_basic_layout /os /os/efi
@@ -2507,7 +2573,7 @@ EOF
     install_$distro
 
     # 安装 arch 有 gpg-agent 进程驻留
-    pkill gpg-agent || true
+    killall -q gpg-agent || true
 
     # 初始化
     if false; then
@@ -2587,9 +2653,13 @@ EOF
     # fstab
     # fstab 可不写 efi 条目， systemd automount 会自动挂载
     # fstab 头部有使用说明，因此用 >>
-    apk add arch-install-scripts
-    genfstab -U $os_dir | sed '/swap/d' >>$os_dir/etc/fstab
-    apk del arch-install-scripts
+    local alpine_rootfs=$os_dir/alpine
+    create_alpine_rootfs_with_arch_install_scripts "$alpine_rootfs" true "$os_dir"
+    # genfstab 会用到 findmnt 等工具
+    retry 5 chroot "$alpine_rootfs" apk add util-linux
+    chroot "$alpine_rootfs" genfstab -U /parent | sed '/swap/d' >>$os_dir/etc/fstab
+    umount -R "$alpine_rootfs/parent"
+    remove_alpine_rootfs "$alpine_rootfs"
 
     # 删除 resolv.conf，不然 systemd-resolved 无法创建软链接
     rm_resolv_conf $os_dir
@@ -3092,6 +3162,7 @@ create_part() {
 }
 
 umount_pseudo_fs() {
+    local os_dir
     os_dir=$(realpath "$1")
 
     dirs="/proc /sys /dev /run"
@@ -3105,7 +3176,7 @@ umount_pseudo_fs() {
 }
 
 mount_pseudo_fs() {
-    os_dir=$1
+    local os_dir=$1
 
     mkdir -p $os_dir/proc/ $os_dir/sys/ $os_dir/dev/ $os_dir/run/
 
@@ -3254,7 +3325,7 @@ create_cloud_init_network_config() {
 # 实测没用，生成的 machine-id 是固定的
 # 而且 lightsail centos 9 模板 machine-id 也是相同的，显然相同 id 不是个问题
 clear_machine_id() {
-    os_dir=$1
+    local os_dir=$1
 
     # https://www.freedesktop.org/software/systemd/man/latest/machine-id.html
     # gentoo 不会自动创建该文件
@@ -3267,7 +3338,7 @@ clear_machine_id() {
 # 注意 anolis 7 有这个文件，可能干扰我们的配置?
 # /etc/cloud/cloud.cfg.d/aliyun_cloud.cfg -> /sys/firmware/qemu_fw_cfg/by_name/etc/cloud-init/vendor-data/raw
 download_cloud_init_config() {
-    os_dir=$1
+    local os_dir=$1
     recognize_static6=$2
     recognize_ipv6_types=$3
 
@@ -3310,10 +3381,10 @@ get_image_state() {
         image_state=$(grep -i '^ImageState=' $state_ini | cut -d= -f2 | tr -d '\r')
     fi
     if [ -z "$image_state" ]; then
-        apk add hivex
+        apk add hivex-perl
         hive=$(find_file_ignore_case $os_dir/Windows/System32/config/SOFTWARE)
         image_state=$(hivexget $hive '\Microsoft\Windows\CurrentVersion\Setup\State' ImageState)
-        apk del hivex
+        apk del hivex-perl
     fi
 
     if [ -n "$image_state" ]; then
@@ -3324,7 +3395,7 @@ get_image_state() {
 }
 
 modify_windows() {
-    os_dir=$1
+    local os_dir=$1
     info "Modify Windows"
 
     # https://learn.microsoft.com/windows-hardware/manufacture/desktop/windows-setup-states
@@ -3505,7 +3576,7 @@ is_file_or_link() {
 }
 
 cp_resolv_conf() {
-    os_dir=$1
+    local os_dir=$1
     if is_file_or_link $os_dir/etc/resolv.conf &&
         ! is_file_or_link $os_dir/etc/resolv.conf.orig; then
         mv $os_dir/etc/resolv.conf $os_dir/etc/resolv.conf.orig
@@ -3514,19 +3585,19 @@ cp_resolv_conf() {
 }
 
 rm_resolv_conf() {
-    os_dir=$1
+    local os_dir=$1
     rm -f $os_dir/etc/resolv.conf $os_dir/etc/resolv.conf.orig
 }
 
 restore_resolv_conf() {
-    os_dir=$1
+    local os_dir=$1
     if is_file_or_link $os_dir/etc/resolv.conf.orig; then
         mv -f $os_dir/etc/resolv.conf.orig $os_dir/etc/resolv.conf
     fi
 }
 
 keep_now_resolv_conf() {
-    os_dir=$1
+    local os_dir=$1
     rm -f $os_dir/etc/resolv.conf.orig
 }
 
@@ -3600,7 +3671,7 @@ get_ucode_firmware_pkgs() {
 }
 
 chroot_systemctl_disable() {
-    os_dir=$1
+    local os_dir=$1
     shift
 
     for unit in "$@"; do
@@ -3617,7 +3688,7 @@ chroot_systemctl_disable() {
 }
 
 remove_or_disable_cloud_init() {
-    os_dir=$1
+    local os_dir=$1
 
     if ! is_have_cmd_on_disk $os_dir cloud-init; then
         return
@@ -3677,7 +3748,7 @@ remove_or_disable_cloud_init() {
 }
 
 disable_jeos_firstboot() {
-    os_dir=$1
+    local os_dir=$1
     info "Disable JeOS Firstboot"
 
     # 两种方法都可以
@@ -3695,8 +3766,8 @@ disable_jeos_firstboot() {
 }
 
 create_network_manager_config() {
-    source_cfg=$1
-    os_dir=$2
+    local source_cfg=$1
+    local os_dir=$2
     info "Create Network-Manager config"
 
     # 可以直接用 alpine 的 cloud-init 生成 Network Manager 配置
@@ -3731,7 +3802,7 @@ create_network_manager_config() {
 }
 
 modify_linux() {
-    os_dir=$1
+    local os_dir=$1
     info "Modify Linux"
 
     find_and_mount() {
@@ -4123,7 +4194,7 @@ EOF
 }
 
 setup_nocloud() {
-    os_dir=$1
+    local os_dir=$1
     info "Setup NoCloud"
 
     # 1. 配置 NoCloud-only datasource
@@ -4169,6 +4240,7 @@ modify_os_on_disk() {
         if mount -o ro /dev/$part /os; then
             if [ "$only_process" = linux ] || [ "$only_process" = nocloud ]; then
                 if etc_dir=$({ ls -d /os/etc/ || ls -d /os/*/etc/; } 2>/dev/null); then
+                    local os_dir
                     os_dir=$(dirname $etc_dir)
                     # 重新挂载为读写
                     mount -o remount,rw /os
@@ -4641,7 +4713,7 @@ change_user_password() {
 }
 
 disable_selinux() {
-    os_dir=$1
+    local os_dir=$1
 
     # https://access.redhat.com/solutions/3176
     # centos7 也建议将 selinux 开关写在 cmdline
@@ -4670,7 +4742,7 @@ disable_selinux() {
 }
 
 disable_kdump() {
-    os_dir=$1
+    local os_dir=$1
 
     # grubby 只处理 GRUB_CMDLINE_LINUX，不会处理 GRUB_CMDLINE_LINUX_DEFAULT
     # rocky 的 GRUB_CMDLINE_LINUX_DEFAULT 有 crashkernel=auto
@@ -4904,7 +4976,7 @@ chroot_apt_autoremove() {
 }
 
 del_default_user() {
-    os_dir=$1
+    local os_dir=$1
 
     local user
     while read -r user; do
@@ -4921,7 +4993,7 @@ is_el7_family() {
 }
 
 del_exist_sysconfig_NetworkManager_config() {
-    os_dir=$1
+    local os_dir=$1
 
     # 删除云镜像自带的 dhcp 配置，防止歧义
     rm -rf $os_dir/etc/NetworkManager/system-connections/*.nmconnection
@@ -4946,7 +5018,7 @@ EOF
 
 install_fnos() {
     info "Install fnos/fygoos"
-    os_dir=/os
+    local os_dir=/os
 
     # 官方安装调用流程
     # /etc/init.d/run_install.sh > trim-install > trim-grub
@@ -5128,7 +5200,7 @@ install_qcow_by_copy() {
 
     modify_el_ol() {
         info "Modify el ol"
-        os_dir=/os
+        local os_dir=/os
 
         # resolv.conf
         cp_resolv_conf /os
@@ -5398,7 +5470,7 @@ EOF
     }
 
     modify_ubuntu() {
-        os_dir=/os
+        local os_dir=/os
         info "Modify Ubuntu"
 
         cp_resolv_conf $os_dir
@@ -6026,8 +6098,8 @@ resize_after_install_cloud_image() {
 }
 
 mount_part_basic_layout() {
-    os_dir=$1
-    efi_dir=$2
+    local os_dir=$1
+    local efi_dir=$2
 
     if is_efi || is_xda_gt_2t; then
         os_part_num=2
@@ -6383,10 +6455,10 @@ get_drivers() {
 get_windows_type_from_windows_drive() {
     local os_dir=$1
 
-    apk add hivex
+    apk add hivex-perl
     system_hive=$(find_file_ignore_case $os_dir/Windows/System32/config/SYSTEM)
     product_type=$(hivexget $system_hive '\ControlSet001\Control\ProductOptions' ProductType)
-    apk del hivex
+    apk del hivex-perl
 
     # ProductType InstallationType 都是用来区分客户端和服务器系统
     # 就驱动而言，用的是 ProductType
@@ -6409,11 +6481,11 @@ get_windows_type_from_windows_drive() {
 get_windows_arch_from_windows_drive() {
     local os_dir=$1
 
-    apk add hivex
+    apk add hivex-perl
     hive=$(find_file_ignore_case $os_dir/Windows/System32/config/SYSTEM)
     # 没有 CurrentControlSet
     hivexget $hive 'ControlSet001\Control\Session Manager\Environment' PROCESSOR_ARCHITECTURE
-    apk del hivex
+    apk del hivex-perl
 }
 
 get_intel_download_url() {
@@ -6432,18 +6504,18 @@ get_intel_download_url() {
         grep -Eio -m1 "https://.+/$file_regex" | grep .
 }
 
-apk_add_hivex_perl() {
-    # TODO: alpine 3.24 发布后删除
-    # hivex-perl 要从 edge/community 仓库下载
+apk_add_from_edge() {
+    # 从 edge/community 仓库下载新版软件包
+    # 现在用不到
     local alpine_mirror
     alpine_mirror=$(grep '^http.*/main$' /etc/apk/repositories | sed 's,/[^/]*/main$,,' | head -1)
     apk add --repository "$alpine_mirror/edge/community" \
         --force-non-repository \
         --virtual edge \
-        hivex-perl
+        "$@"
 }
 
-apk_del_hivex_perl() {
+apk_del_edge() {
     apk del edge
 }
 
@@ -7148,10 +7220,13 @@ EOF
 
         [ "$arch_wim" = arm64 ] && arch_dir=/ARM64 || arch_dir=
 
-        download "$(get_aws_repo)/NVMe$arch_dir/$nvme_ver/AWSNVMe.zip" $drv/AWSNVMe.zip
-        download "$(get_aws_repo)/ENA$arch_dir/$ena_ver/AwsEnaNetworkDriver.zip" $drv/AwsEnaNetworkDriver.zip
+        # arm64 的 AWSNVMe.zip 已从服务器删除
+        if ! [ "$arch_wim" = arm64 ]; then
+            download "$(get_aws_repo)/NVMe$arch_dir/$nvme_ver/AWSNVMe.zip" $drv/AWSNVMe.zip
+            unzip -o -d $drv/aws/ $drv/AWSNVMe.zip
+        fi
 
-        unzip -o -d $drv/aws/ $drv/AWSNVMe.zip
+        download "$(get_aws_repo)/ENA$arch_dir/$ena_ver/AwsEnaNetworkDriver.zip" $drv/AwsEnaNetworkDriver.zip
         unzip -o -d $drv/aws/ $drv/AwsEnaNetworkDriver.zip
 
         cp_drivers $drv/aws
@@ -7647,7 +7722,7 @@ EOF
             to_system_hive="$(find_file_ignore_case /wim/Windows/System32/config/SYSTEM)"
             to_software_hive="$(find_file_ignore_case /wim/Windows/System32/config/SOFTWARE)"
 
-            apk_add_hivex_perl
+            apk add hivex-perl
 
             # 获取当前生效的 wvpci.inf 文件
             # 得到 wvpci.inf_amd64_86afbe8940682d27 这样的文件名
@@ -7699,7 +7774,7 @@ EOF
 EOF
             hivexregedit --merge "$to_system_hive" "$reg"
 
-            apk_del_hivex_perl
+            apk del hivex-perl
         else
             error_and_exit "vpci driver not found."
         fi
@@ -8030,6 +8105,8 @@ EOF
         cat <<EOF >"$(get_path_in_correct_case /os/boot/grub/grub.cfg)"
             set timeout=5
             menuentry "reinstall" {
+                insmod search
+                insmod ntldr
                 search --no-floppy --label --set=root os
                 ntldr /$(cd /os && get_path_in_correct_case bootmgr)
             }
@@ -8203,6 +8280,8 @@ install_redhat_ubuntu() {
             # https://bugs.launchpad.net/ubuntu/+source/grub2/+bug/1851311
             # rmmod tpm
             insmod all_video
+            insmod search
+            insmod loopback
             search --no-floppy --label --set=root installer
             loopback loop /ubuntu.iso
             linux (loop)/casper/vmlinuz iso-scan/filename=/ubuntu.iso autoinstall noprompt noeject cloud-config-url=$ks $extra_cmdline extra_kernel=$kernel extra_source_id=$source_id --- $console_cmdline
@@ -8218,6 +8297,7 @@ EOF
         set timeout=5
         menuentry "reinstall" {
             insmod all_video
+            insmod search
             search --no-floppy --label --set=root os
             linux /vmlinuz inst.stage2=hd:LABEL=installer:/install.img inst.ks=$ks $extra_cmdline $console_cmdline
             initrd /initrd.img
