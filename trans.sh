@@ -11,6 +11,7 @@ set -eE
 # 用于判断 reinstall.sh 和 trans.sh 是否兼容
 # shellcheck disable=SC2034
 SCRIPT_VERSION=4BACD833-A585-23BA-6CBB-9AA4E08E0004
+DEFAULT_OFFICE365_URL='https://c2rsetup.officeapps.live.com/c2r/download.aspx?ProductreleaseID=O365ProPlusRetail&platform=x64&language=zh-tw&version=O16GA'
 
 TRUE=0
 FALSE=1
@@ -537,6 +538,9 @@ extract_env_from_cmdline() {
     ssh_port=${ssh_port:-22}
     rdp_port=${rdp_port:-3389}
     web_port=${web_port:-80}
+    if [ "$office365" = 1 ] && [ -z "$office365_url" ]; then
+        office365_url=$DEFAULT_OFFICE365_URL
+    fi
 }
 
 assert_software_valid() {
@@ -547,6 +551,21 @@ assert_software_valid() {
             error_and_exit "Software package '$package' is invalid. Use whitespace-separated winget package ids or queries."
         fi
     done
+}
+
+assert_office365_url_valid() {
+    local url=$1
+
+    [ -n "$url" ] || error_and_exit "Office 365 URL: Can not be empty."
+
+    case "$url" in
+    [Hh][Tt][Tt][Pp]://* | [Hh][Tt][Tt][Pp][Ss]://*) ;;
+    *) error_and_exit "Office 365 URL must start with http:// or https://." ;;
+    esac
+
+    if printf '%s' "$url" | grep -q "[[:space:]'\"^<>|]"; then
+        error_and_exit "Office 365 URL contains invalid characters."
+    fi
 }
 
 ensure_service_started() {
@@ -3466,7 +3485,13 @@ EOF
         bats="$bats windows-install-software.bat"
     fi
 
-    # 7. frp
+    # 7. 首次登录后静默安装 Microsoft 365 Apps
+    if [ "$office365" = 1 ]; then
+        create_win_install_office365_script $os_dir/windows-install-office365.bat
+        bats="$bats windows-install-office365.bat"
+    fi
+
+    # 8. frp
     if ls /configs/frpc.* >/dev/null 2>&1; then
         if [ "$(get_windows_arch_from_windows_drive "$os_dir" | to_lower)" = x86 ]; then
             os_bit=32
@@ -6272,6 +6297,86 @@ if errorlevel 1 (
 ) else (
     echo [%DATE% %TIME%] Installed %Package%. >>"%Log%"
 )
+exit /b 0
+EOF
+
+    unix2dos $script_path
+}
+
+create_win_install_office365_script() {
+    script_path=$1
+    local office365_url_bat
+
+    info "Create win install Office 365 script"
+    assert_office365_url_valid "$office365_url"
+    office365_url_bat=$(printf '%s' "$office365_url" | sed 's/%/%%/g')
+
+    cat <<EOF >$script_path
+@echo off
+setlocal EnableExtensions DisableDelayedExpansion
+
+set "OfficeSetupUrl=$office365_url_bat"
+EOF
+
+    cat <<'EOF' >>$script_path
+set "Log=%SystemDrive%\windows-install-office365.log"
+
+if /i "%~1"=="install" goto install
+
+echo [%DATE% %TIME%] Register Microsoft 365 Apps RunOnce. >>"%Log%"
+reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" /v "ReinstallInstallOffice365" /t REG_SZ /d "cmd /c %SystemDrive%\windows-install-office365.bat install" /f >>"%Log%" 2>&1
+exit /b 0
+
+:install
+echo [%DATE% %TIME%] Start Microsoft 365 Apps install. >>"%Log%"
+set "WorkDir=%ProgramData%\reinstall-office365"
+set "OfficeSetup=%WorkDir%\OfficeSetup.exe"
+set "ConfigXml=%WorkDir%\office365-configuration.xml"
+
+if not exist "%WorkDir%" mkdir "%WorkDir%" >>"%Log%" 2>&1
+
+call :download "%OfficeSetupUrl%" "%OfficeSetup%"
+if errorlevel 1 exit /b 1
+
+call :writeConfig
+
+start /wait "" "%OfficeSetup%" /configure "%ConfigXml%" >>"%Log%" 2>&1
+set "ExitCode=%ERRORLEVEL%"
+if not "%ExitCode%"=="0" (
+    echo [%DATE% %TIME%] Microsoft 365 Apps install failed: %ExitCode%. >>"%Log%"
+    exit /b %ExitCode%
+)
+
+echo [%DATE% %TIME%] Finished Microsoft 365 Apps install. >>"%Log%"
+del "%OfficeSetup%" >nul 2>&1
+del "%ConfigXml%" >nul 2>&1
+rmdir "%WorkDir%" >nul 2>&1
+del "%~f0" >nul 2>&1
+exit /b 0
+
+:download
+set "DownloadUrl=%~1"
+set "DownloadPath=%~2"
+echo [%DATE% %TIME%] Downloading %DownloadUrl%. >>"%Log%"
+powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072 } catch {}; (New-Object Net.WebClient).DownloadFile($env:DownloadUrl, $env:DownloadPath)" >>"%Log%" 2>&1
+if exist "%DownloadPath%" exit /b 0
+
+certutil -urlcache -f -split "%DownloadUrl%" "%DownloadPath%" >>"%Log%" 2>&1
+if exist "%DownloadPath%" exit /b 0
+
+echo [%DATE% %TIME%] Download failed. >>"%Log%"
+exit /b 1
+
+:writeConfig
+> "%ConfigXml%" echo ^<Configuration^>
+>> "%ConfigXml%" echo   ^<Add OfficeClientEdition="64" Channel="Current"^>
+>> "%ConfigXml%" echo     ^<Product ID="O365ProPlusRetail"^>
+>> "%ConfigXml%" echo       ^<Language ID="zh-tw" /^>
+>> "%ConfigXml%" echo     ^</Product^>
+>> "%ConfigXml%" echo   ^</Add^>
+>> "%ConfigXml%" echo   ^<Updates Enabled="TRUE" /^>
+>> "%ConfigXml%" echo   ^<Display Level="None" AcceptEULA="TRUE" /^>
+>> "%ConfigXml%" echo ^</Configuration^>
 exit /b 0
 EOF
 

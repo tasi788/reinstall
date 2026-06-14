@@ -468,6 +468,10 @@ bash reinstall.sh windows \
 - `--software WINGET_PACKAGE_LIST` 首次登录桌面后自动执行 `winget install` 安装软件，多个软件用空格分隔，例如 `--software "Telegram.TelegramDesktop Google.Chrome"`
   - 建议填写 winget package id；如果填写普通查询词，会先尝试精确 ID，失败后再使用 winget 查询安装
   - 安装日志保存在 `C:\windows-install-software.log`
+- `--office365` 首次登录桌面后静默安装 Microsoft 365 Apps（Office 365），安装后用户打开 Office 自行登录授权账号
+  - 默认使用官方繁中 x64 `O365ProPlusRetail` 安装器：<https://c2rsetup.officeapps.live.com/c2r/download.aspx?ProductreleaseID=O365ProPlusRetail&platform=x64&language=zh-tw&version=O16GA>
+  - 可用 `--office365-url URL` 覆盖下载链接
+  - 安装日志保存在 `C:\windows-install-office365.log`
 - `--frpc-config PATH` 添加 frpc 内网穿透，参数填配置文件的本地路径或 HTTP 链接
 - `--hold 1` 仅重启到安装环境，不运行安装，用于 SSH 登录验证网络连通性
 - `--hold 2` 用于在进入 Windows 官方安装程序之前，SSH 登录修改 `boot.wim`、`install.wim` 或者其它内容，硬盘挂载在 `/os`

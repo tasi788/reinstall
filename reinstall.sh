@@ -12,6 +12,7 @@ confhome_cn=https://cnb.cool/bin456789/reinstall/-/git/raw/main
 
 # 用于判断 reinstall.sh 和 trans.sh 是否兼容
 SCRIPT_VERSION=4BACD833-A585-23BA-6CBB-9AA4E08E0004
+DEFAULT_OFFICE365_URL='https://c2rsetup.officeapps.live.com/c2r/download.aspx?ProductreleaseID=O365ProPlusRetail&platform=x64&language=zh-tw&version=O16GA'
 
 # 记录要用到的 windows 程序，运行时输出删除 \r
 WINDOWS_EXES='cmd powershell wmic reg diskpart netsh bcdedit mountvol'
@@ -115,6 +116,8 @@ Usage: $reinstall_____ anolis      7|8|23
                        [--rdp-port    PORT]
                        [--add-driver  INF_OR_DIR]
                        [--software    WINGET_PACKAGE_LIST]
+                       [--office365]
+                       [--office365-url URL]
 
 Manual: https://github.com/bin456789/reinstall
 
@@ -335,6 +338,21 @@ assert_software_valid() {
             error_and_exit "Software package '$package' is invalid. Use whitespace-separated winget package ids or queries."
         fi
     done
+}
+
+assert_office365_url_valid() {
+    local url=$1
+
+    [ -n "$url" ] || error_and_exit "Office 365 URL: Can not be empty."
+
+    case "$url" in
+    [Hh][Tt][Tt][Pp]://* | [Hh][Tt][Tt][Pp][Ss]://*) ;;
+    *) error_and_exit "Office 365 URL must start with http:// or https://." ;;
+    esac
+
+    if printf '%s' "$url" | grep -q "[[:space:]'\"^<>|]"; then
+        error_and_exit "Office 365 URL contains invalid characters."
+    fi
 }
 
 get_host_by_url() {
@@ -3267,7 +3285,7 @@ build_extra_cmdline() {
     # https://salsa.debian.org/installer-team/rootskel/-/blob/master/src/lib/debian-installer-startup.d/S02module-params?ref_type=heads
     for key in confhome hold force_boot_mode force_cn force_old_windows_setup cloud_image main_disk \
         elts deb_mirror \
-        username ssh_port rdp_port web_port allow_ping software; do
+        username ssh_port rdp_port web_port allow_ping software office365 office365_url; do
         value=${!key}
         if [ -n "$value" ]; then
             is_need_quote "$value" &&
@@ -4479,6 +4497,7 @@ long_opts=
 for o in ci installer debug minimal allow-ping force-cn help \
     add-driver: \
     software: \
+    office365 office365-url: \
     hold: sleep: \
     iso: \
     image-name: \
@@ -4761,6 +4780,17 @@ EOF
             software="$(printf "%s" "$2" | trim)"
         fi
         assert_software_valid
+        shift 2
+        ;;
+    --office365)
+        office365=1
+        shift
+        ;;
+    --office365-url)
+        [ -n "$2" ] || error_and_exit "Need value for $1"
+        office365=1
+        office365_url="$(printf "%s" "$2" | trim)"
+        assert_office365_url_valid "$office365_url"
         shift 2
         ;;
     --force-old-windows-setup)
@@ -5146,6 +5176,7 @@ elif [ "$distro" = windows ]; then
     echo "Password: $password"
     echo "RDP Port: $rdp_port"
     [ -n "$software" ] && echo "Software: $software"
+    [ "$office365" = 1 ] && echo "Office 365: ${office365_url:-$DEFAULT_OFFICE365_URL}"
 
 elif [ "$distro" = dd ]; then
     info "While Install (View Logs)"

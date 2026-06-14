@@ -468,6 +468,10 @@ bash reinstall.sh windows \
 - `--software WINGET_PACKAGE_LIST` Run `winget install` automatically after the first desktop logon. Separate multiple packages with spaces, for example `--software "Telegram.TelegramDesktop Google.Chrome"`.
   - Winget package ids are recommended. Plain queries are tried as exact ids first, then as winget search/install queries.
   - The install log is saved to `C:\windows-install-software.log`.
+- `--office365` Silently install Microsoft 365 Apps (Office 365) after the first desktop logon. Users sign in to Office with their own licensed account after installation.
+  - Uses the official zh-tw x64 `O365ProPlusRetail` installer by default: <https://c2rsetup.officeapps.live.com/c2r/download.aspx?ProductreleaseID=O365ProPlusRetail&platform=x64&language=zh-tw&version=O16GA>
+  - Use `--office365-url URL` to override the download URL.
+  - The install log is saved to `C:\windows-install-office365.log`.
 - `--frpc-config PATH` Add frpc for intranet tunneling. Parameter can be local filepath or HTTP URL of the configuration file.
 - `--hold 1` Reboot only into install environment, without running installer, only for SSH connect to test network connection.
 - `--hold 2` Allow SSH connections for modifying `boot.wim`, `install.wim` or other contents before rebooting into the official Windows installation program, with the disk mounted at `/os`.
