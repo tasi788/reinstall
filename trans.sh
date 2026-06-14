@@ -6265,7 +6265,16 @@ if errorlevel 1 (
     exit /b 1
 )
 
-winget source update --accept-source-agreements >>"%Log%" 2>&1
+set "WingetAcceptSourceArg="
+winget source update --help | findstr /I /C:"--accept-source-agreements" >nul 2>&1 && set "WingetAcceptSourceArg=--accept-source-agreements"
+if defined WingetAcceptSourceArg (
+    winget source update --accept-source-agreements >>"%Log%" 2>&1
+) else (
+    winget source update >>"%Log%" 2>&1
+)
+if errorlevel 1 (
+    echo [%DATE% %TIME%] winget source update failed. >>"%Log%"
+)
 
 for /f "usebackq delims=" %%P in ("%SystemDrive%\windows-install-software.txt") do (
     if not "%%P"=="" call :installPackage "%%P"
@@ -6288,9 +6297,16 @@ exit /b 1
 :installPackage
 set "Package=%~1"
 echo [%DATE% %TIME%] Installing %Package%. >>"%Log%"
-winget install --id "%Package%" --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity >>"%Log%" 2>&1
-if errorlevel 1 (
-    winget install "%Package%" --silent --accept-package-agreements --accept-source-agreements --disable-interactivity >>"%Log%" 2>&1
+if defined WingetAcceptSourceArg (
+    winget install --id "%Package%" --exact --silent --accept-package-agreements %WingetAcceptSourceArg% --disable-interactivity >>"%Log%" 2>&1
+    if errorlevel 1 (
+        winget install "%Package%" --silent --accept-package-agreements %WingetAcceptSourceArg% --disable-interactivity >>"%Log%" 2>&1
+    )
+) else (
+    winget install --id "%Package%" --exact --silent --accept-package-agreements --disable-interactivity >>"%Log%" 2>&1
+    if errorlevel 1 (
+        winget install "%Package%" --silent --accept-package-agreements --disable-interactivity >>"%Log%" 2>&1
+    )
 )
 if errorlevel 1 (
     echo [%DATE% %TIME%] Failed %Package%. >>"%Log%"
