@@ -6347,7 +6347,7 @@ set "ConfigXml=%WorkDir%\office365-configuration.xml"
 
 if not exist "%WorkDir%" mkdir "%WorkDir%" >>"%Log%" 2>&1
 
-call :download "%OfficeSetupUrl%" "%OfficeSetup%"
+call :downloadOfficeSetup
 if errorlevel 1 exit /b 1
 
 call :writeConfig
@@ -6366,10 +6366,10 @@ rmdir "%WorkDir%" >nul 2>&1
 del "%~f0" >nul 2>&1
 exit /b 0
 
-:download
-set "DownloadUrl=%~1"
-set "DownloadPath=%~2"
-echo [%DATE% %TIME%] Downloading %DownloadUrl%. >>"%Log%"
+:downloadOfficeSetup
+set "DownloadUrl=%OfficeSetupUrl%"
+set "DownloadPath=%OfficeSetup%"
+echo [%DATE% %TIME%] Downloading Microsoft 365 Apps setup. >>"%Log%"
 powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072 } catch {}; (New-Object Net.WebClient).DownloadFile($env:DownloadUrl, $env:DownloadPath)" >>"%Log%" 2>&1
 if exist "%DownloadPath%" exit /b 0
 
