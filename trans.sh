@@ -6253,36 +6253,42 @@ set "Log=%SystemDrive%\windows-install-software.log"
 
 if /i "%~1"=="install" goto install
 
-echo [%DATE% %TIME%] Register winget RunOnce. >>"%Log%"
+call :log "Register winget RunOnce."
 reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" /v "ReinstallInstallSoftware" /t REG_SZ /d "cmd /c %SystemDrive%\windows-install-software.bat install" /f >>"%Log%" 2>&1
 exit /b 0
 
 :install
-echo [%DATE% %TIME%] Start winget installs. >>"%Log%"
+title Reinstall - Installing software
+call :showHeader "Installing software with winget"
+call :log "Start winget installs."
+call :log "Waiting for winget to become available."
 call :waitWinget
 if errorlevel 1 (
-    echo [%DATE% %TIME%] winget not found. >>"%Log%"
+    call :log "winget not found."
+    call :finishWithError 1
     exit /b 1
 )
 
 set "WingetAcceptSourceArg="
 winget install --help | findstr /I /C:"--accept-source-agreements" >nul 2>&1 && set "WingetAcceptSourceArg=--accept-source-agreements"
+call :log "Updating winget source."
 winget source update --name winget >>"%Log%" 2>&1
 if errorlevel 1 (
-    echo [%DATE% %TIME%] winget source update failed. >>"%Log%"
+    call :log "winget source update failed. Continuing with package installs."
 )
 
 for /f "usebackq delims=" %%P in ("%SystemDrive%\windows-install-software.txt") do (
     if not "%%P"=="" call :installPackage "%%P"
 )
 
-echo [%DATE% %TIME%] Finished winget installs. >>"%Log%"
+call :log "Finished winget installs."
 del "%SystemDrive%\windows-install-software.txt" >nul 2>&1
 del "%~f0" >nul 2>&1
 exit /b 0
 
 :waitWinget
 for /l %%I in (1,1,30) do (
+    call :log "Checking winget availability, attempt %%I of 30."
     winget --version >>"%Log%" 2>&1 && exit /b 0
     powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe" >>"%Log%" 2>&1
     winget --version >>"%Log%" 2>&1 && exit /b 0
@@ -6292,24 +6298,44 @@ exit /b 1
 
 :installPackage
 set "Package=%~1"
-echo [%DATE% %TIME%] Installing %Package%. >>"%Log%"
+call :log "Installing %Package%."
 if defined WingetAcceptSourceArg (
     winget install --id "%Package%" --exact --source winget --silent --accept-package-agreements %WingetAcceptSourceArg% --disable-interactivity >>"%Log%" 2>&1
     if errorlevel 1 (
+        call :log "Exact package id failed for %Package%; trying winget search."
         winget install "%Package%" --source winget --silent --accept-package-agreements %WingetAcceptSourceArg% --disable-interactivity >>"%Log%" 2>&1
     )
 ) else (
     winget install --id "%Package%" --exact --source winget --silent --accept-package-agreements --disable-interactivity >>"%Log%" 2>&1
     if errorlevel 1 (
+        call :log "Exact package id failed for %Package%; trying winget search."
         winget install "%Package%" --source winget --silent --accept-package-agreements --disable-interactivity >>"%Log%" 2>&1
     )
 )
 if errorlevel 1 (
-    echo [%DATE% %TIME%] Failed %Package%. >>"%Log%"
+    call :log "Failed %Package%."
 ) else (
-    echo [%DATE% %TIME%] Installed %Package%. >>"%Log%"
+    call :log "Installed %Package%."
 )
 exit /b 0
+
+:showHeader
+echo.
+echo Reinstall task: %~1
+echo Please keep this window open. It will close automatically when finished.
+echo Log: %Log%
+echo.
+exit /b 0
+
+:log
+echo [%DATE% %TIME%] %~1
+>>"%Log%" echo [%DATE% %TIME%] %~1
+exit /b 0
+
+:finishWithError
+set "ExitCode=%~1"
+call :log "Install task failed. See %Log% for details."
+exit /b %ExitCode%
 EOF
 
     unix2dos $script_path
@@ -6335,12 +6361,14 @@ set "Log=%SystemDrive%\windows-install-office365.log"
 
 if /i "%~1"=="install" goto install
 
-echo [%DATE% %TIME%] Register Microsoft 365 Apps RunOnce. >>"%Log%"
+call :log "Register Microsoft 365 Apps RunOnce."
 reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" /v "ReinstallInstallOffice365" /t REG_SZ /d "cmd /c %SystemDrive%\windows-install-office365.bat install" /f >>"%Log%" 2>&1
 exit /b 0
 
 :install
-echo [%DATE% %TIME%] Start Microsoft 365 Apps install. >>"%Log%"
+title Reinstall - Installing Microsoft 365 Apps
+call :showHeader "Installing Microsoft 365 Apps"
+call :log "Start Microsoft 365 Apps install."
 set "WorkDir=%ProgramData%\reinstall-office365"
 set "OfficeSetup=%WorkDir%\OfficeSetup.exe"
 set "ConfigXml=%WorkDir%\office365-configuration.xml"
@@ -6348,18 +6376,25 @@ set "ConfigXml=%WorkDir%\office365-configuration.xml"
 if not exist "%WorkDir%" mkdir "%WorkDir%" >>"%Log%" 2>&1
 
 call :downloadOfficeSetup
-if errorlevel 1 exit /b 1
+if errorlevel 1 (
+    call :finishWithError 1
+    exit /b 1
+)
 
+call :log "Writing Microsoft 365 Apps configuration."
 call :writeConfig
 
+call :log "Running Microsoft 365 Apps setup. This can take a while."
 start /wait "" "%OfficeSetup%" /configure "%ConfigXml%" >>"%Log%" 2>&1
 set "ExitCode=%ERRORLEVEL%"
 if not "%ExitCode%"=="0" (
-    echo [%DATE% %TIME%] Microsoft 365 Apps install failed: %ExitCode%. >>"%Log%"
+    call :log "Microsoft 365 Apps install failed: %ExitCode%."
+    call :finishWithError %ExitCode%
     exit /b %ExitCode%
 )
 
-echo [%DATE% %TIME%] Finished Microsoft 365 Apps install. >>"%Log%"
+call :log "Finished Microsoft 365 Apps install."
+call :log "Cleaning up temporary files."
 del "%OfficeSetup%" >nul 2>&1
 del "%ConfigXml%" >nul 2>&1
 rmdir "%WorkDir%" >nul 2>&1
@@ -6369,14 +6404,20 @@ exit /b 0
 :downloadOfficeSetup
 set "DownloadUrl=%OfficeSetupUrl%"
 set "DownloadPath=%OfficeSetup%"
-echo [%DATE% %TIME%] Downloading Microsoft 365 Apps setup. >>"%Log%"
+call :log "Downloading Microsoft 365 Apps setup."
 powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072 } catch {}; (New-Object Net.WebClient).DownloadFile($env:DownloadUrl, $env:DownloadPath)" >>"%Log%" 2>&1
-if exist "%DownloadPath%" exit /b 0
+if exist "%DownloadPath%" (
+    call :log "Downloaded Microsoft 365 Apps setup."
+    exit /b 0
+)
 
 certutil -urlcache -f -split "%DownloadUrl%" "%DownloadPath%" >>"%Log%" 2>&1
-if exist "%DownloadPath%" exit /b 0
+if exist "%DownloadPath%" (
+    call :log "Downloaded Microsoft 365 Apps setup."
+    exit /b 0
+)
 
-echo [%DATE% %TIME%] Download failed. >>"%Log%"
+call :log "Download failed."
 exit /b 1
 
 :writeConfig
@@ -6390,6 +6431,24 @@ exit /b 1
 >> "%ConfigXml%" echo   ^<Display Level="None" AcceptEULA="TRUE" /^>
 >> "%ConfigXml%" echo ^</Configuration^>
 exit /b 0
+
+:showHeader
+echo.
+echo Reinstall task: %~1
+echo Please keep this window open. It will close automatically when finished.
+echo Log: %Log%
+echo.
+exit /b 0
+
+:log
+echo [%DATE% %TIME%] %~1
+>>"%Log%" echo [%DATE% %TIME%] %~1
+exit /b 0
+
+:finishWithError
+set "ExitCode=%~1"
+call :log "Install task failed. See %Log% for details."
+exit /b %ExitCode%
 EOF
 
     unix2dos $script_path
