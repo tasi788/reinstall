@@ -6245,9 +6245,10 @@ create_win_install_software_script() {
     done
     unix2dos $package_list
 
-    cat <<'EOF' >$script_path
+cat <<'EOF' >$script_path
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
+chcp 65001 >nul 2>&1 || chcp 936 >nul 2>&1
 
 set "Log=%SystemDrive%\windows-install-software.log"
 
@@ -6260,6 +6261,7 @@ exit /b 0
 :install
 title Reinstall - 正在安裝軟體（winget）
 call :showHeader "使用 winget 安裝軟體"
+call :log "請勿關閉此視窗，安裝完成後會自動關閉。"
 call :log "開始執行 winget 安裝"
 call :log "等待 winget 可用"
 call :waitWinget
@@ -6322,7 +6324,7 @@ exit /b 0
 :showHeader
 echo.
 echo Reinstall 任務：%~1
-echo 請保持此視窗開啟，完成後會自動關閉
+echo 請勿關閉此視窗，完成後會自動關閉。
 echo 日誌：%Log%
 echo.
 exit /b 0
@@ -6349,9 +6351,10 @@ create_win_install_office365_script() {
     assert_office365_url_valid "$office365_url"
     office365_url_bat=$(printf '%s' "$office365_url" | sed 's/%/%%/g')
 
-    cat <<EOF >$script_path
+cat <<EOF >$script_path
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
+chcp 65001 >nul 2>&1 || chcp 936 >nul 2>&1
 
 set "OfficeSetupUrl=$office365_url_bat"
 EOF
@@ -6368,6 +6371,7 @@ exit /b 0
 :install
 title Reinstall - 安裝 Microsoft 365 Apps
 call :showHeader "安裝 Microsoft 365 Apps"
+call :log "請勿關閉此視窗，安裝完成後會自動關閉。"
 call :log "開始安裝 Microsoft 365 Apps"
 set "WorkDir=%ProgramData%\reinstall-office365"
 set "OfficeSetup=%WorkDir%\OfficeSetup.exe"
@@ -6435,7 +6439,7 @@ exit /b 0
 :showHeader
 echo.
 echo Reinstall 任務：%~1
-echo 請保持此視窗開啟，完成後會自動關閉
+echo 請勿關閉此視窗，完成後會自動關閉。
 echo 日誌：%Log%
 echo.
 exit /b 0
