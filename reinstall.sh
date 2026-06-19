@@ -118,6 +118,8 @@ Usage: $reinstall_____ anolis      7|8|23
                        [--software    WINGET_PACKAGE_LIST]
                        [--office365]
                        [--office365-url URL]
+                       [--post-install-powershell-url URL]
+                       [--post-install-powershell-args ARGS]
 
 Manual: https://github.com/bin456789/reinstall
 
@@ -352,6 +354,21 @@ assert_office365_url_valid() {
 
     if printf '%s' "$url" | grep -q "[[:space:]'\"^<>|]"; then
         error_and_exit "Office 365 URL contains invalid characters."
+    fi
+}
+
+assert_post_install_powershell_url_valid() {
+    local url=$1
+
+    [ -n "$url" ] || error_and_exit "Post-install PowerShell URL: Can not be empty."
+
+    case "$url" in
+    [Hh][Tt][Tt][Pp]://* | [Hh][Tt][Tt][Pp][Ss]://*) ;;
+    *) error_and_exit "Post-install PowerShell URL must start with http:// or https://." ;;
+    esac
+
+    if printf '%s' "$url" | grep -q "[[:space:]'\"^<>|]"; then
+        error_and_exit "Post-install PowerShell URL contains invalid characters."
     fi
 }
 
@@ -3285,7 +3302,8 @@ build_extra_cmdline() {
     # https://salsa.debian.org/installer-team/rootskel/-/blob/master/src/lib/debian-installer-startup.d/S02module-params?ref_type=heads
     for key in confhome hold force_boot_mode force_cn force_old_windows_setup cloud_image main_disk \
         elts deb_mirror \
-        username ssh_port rdp_port web_port allow_ping software office365 office365_url; do
+        username ssh_port rdp_port web_port allow_ping software office365 office365_url \
+        post_install_powershell_url post_install_powershell_args; do
         value=${!key}
         if [ -n "$value" ]; then
             is_need_quote "$value" &&
@@ -4492,12 +4510,20 @@ if is_secure_boot_enabled; then
     error_and_exit "Please disable secure boot first."
 fi
 
+post_install_powershell_url=${POST_INSTALL_POWERSHELL_URL:-}
+post_install_powershell_args=${POST_INSTALL_POWERSHELL_ARGS:-}
+if [ -n "$post_install_powershell_url" ]; then
+    assert_post_install_powershell_url_valid "$post_install_powershell_url"
+fi
+
 # 整理参数
 long_opts=
 for o in ci installer debug minimal allow-ping force-cn help \
     add-driver: \
     software: \
     office365 office365-url: \
+    post-install-powershell-url: \
+    post-install-powershell-args: \
     hold: sleep: \
     iso: \
     image-name: \
@@ -4791,6 +4817,17 @@ EOF
         office365=1
         office365_url="$(printf "%s" "$2" | trim)"
         assert_office365_url_valid "$office365_url"
+        shift 2
+        ;;
+    --post-install-powershell-url)
+        [ -n "$2" ] || error_and_exit "Need value for $1"
+        post_install_powershell_url="$(printf "%s" "$2" | trim)"
+        assert_post_install_powershell_url_valid "$post_install_powershell_url"
+        shift 2
+        ;;
+    --post-install-powershell-args)
+        [ -n "$2" ] || error_and_exit "Need value for $1"
+        post_install_powershell_args="$(printf "%s" "$2" | trim)"
         shift 2
         ;;
     --force-old-windows-setup)
@@ -5177,6 +5214,7 @@ elif [ "$distro" = windows ]; then
     echo "RDP Port: $rdp_port"
     [ -n "$software" ] && echo "Software: $software"
     [ "$office365" = 1 ] && echo "Office 365: ${office365_url:-$DEFAULT_OFFICE365_URL}"
+    [ -n "$post_install_powershell_url" ] && echo "Post-install PowerShell: $post_install_powershell_url $post_install_powershell_args"
 
 elif [ "$distro" = dd ]; then
     info "While Install (View Logs)"

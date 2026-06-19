@@ -541,6 +541,9 @@ extract_env_from_cmdline() {
     if [ "$office365" = 1 ] && [ -z "$office365_url" ]; then
         office365_url=$DEFAULT_OFFICE365_URL
     fi
+    if [ -n "$post_install_powershell_url" ]; then
+        assert_post_install_powershell_url_valid "$post_install_powershell_url"
+    fi
 }
 
 assert_software_valid() {
@@ -565,6 +568,21 @@ assert_office365_url_valid() {
 
     if printf '%s' "$url" | grep -q "[[:space:]'\"^<>|]"; then
         error_and_exit "Office 365 URL contains invalid characters."
+    fi
+}
+
+assert_post_install_powershell_url_valid() {
+    local url=$1
+
+    [ -n "$url" ] || error_and_exit "Post-install PowerShell URL: Can not be empty."
+
+    case "$url" in
+    [Hh][Tt][Tt][Pp]://* | [Hh][Tt][Tt][Pp][Ss]://*) ;;
+    *) error_and_exit "Post-install PowerShell URL must start with http:// or https://." ;;
+    esac
+
+    if printf '%s' "$url" | grep -q "[[:space:]'\"^<>|]"; then
+        error_and_exit "Post-install PowerShell URL contains invalid characters."
     fi
 }
 
@@ -3491,7 +3509,13 @@ EOF
         bats="$bats windows-install-office365.bat"
     fi
 
-    # 8. frp
+    # 8. 首次登录后执行 post-install PowerShell
+    if [ -n "$post_install_powershell_url" ]; then
+        create_win_post_install_powershell_script $os_dir/windows-post-install-powershell.bat
+        bats="$bats windows-post-install-powershell.bat"
+    fi
+
+    # 9. frp
     if ls /configs/frpc.* >/dev/null 2>&1; then
         if [ "$(get_windows_arch_from_windows_drive "$os_dir" | to_lower)" = x86 ]; then
             os_bit=32
@@ -6260,7 +6284,11 @@ exit /b 0
 
 :install
 title Reinstall - 正在安裝軟體（winget）
-call :showHeader "使用 winget 安裝軟體"
+echo(
+echo Reinstall 任務：使用 winget 安裝軟體
+echo 請勿關閉此視窗，完成後會自動關閉。
+echo 日誌：%Log%
+echo(
 call :log "請勿關閉此視窗，安裝完成後會自動關閉。"
 call :log "開始執行 winget 安裝"
 call :log "等待 winget 可用"
@@ -6274,7 +6302,7 @@ if errorlevel 1 (
 set "WingetAcceptSourceArg="
 winget install --help | findstr /I /C:"--accept-source-agreements" >nul 2>&1 && set "WingetAcceptSourceArg=--accept-source-agreements"
 call :log "更新 winget 來源"
-winget source update --name winget >>"%Log%" 2>&1
+winget source update --name winget
 if errorlevel 1 (
     call :log "更新 winget 來源失敗，繼續進行軟體安裝"
 )
@@ -6302,16 +6330,16 @@ exit /b 1
 set "Package=%~1"
 call :log "開始安裝 %Package%"
 if defined WingetAcceptSourceArg (
-    winget install --id "%Package%" --exact --source winget --silent --accept-package-agreements %WingetAcceptSourceArg% --disable-interactivity >>"%Log%" 2>&1
+    winget install --id "%Package%" --exact --source winget --silent --accept-package-agreements %WingetAcceptSourceArg% --disable-interactivity
     if errorlevel 1 (
         call :log "精準 ID 安裝 %Package% 失敗，改用 winget 搜尋"
-        winget install "%Package%" --source winget --silent --accept-package-agreements %WingetAcceptSourceArg% --disable-interactivity >>"%Log%" 2>&1
+        winget install "%Package%" --source winget --silent --accept-package-agreements %WingetAcceptSourceArg% --disable-interactivity
     )
 ) else (
-    winget install --id "%Package%" --exact --source winget --silent --accept-package-agreements --disable-interactivity >>"%Log%" 2>&1
+    winget install --id "%Package%" --exact --source winget --silent --accept-package-agreements --disable-interactivity
     if errorlevel 1 (
         call :log "精準 ID 安裝 %Package% 失敗，改用 winget 搜尋"
-        winget install "%Package%" --source winget --silent --accept-package-agreements --disable-interactivity >>"%Log%" 2>&1
+        winget install "%Package%" --source winget --silent --accept-package-agreements --disable-interactivity
     )
 )
 if errorlevel 1 (
@@ -6319,14 +6347,7 @@ if errorlevel 1 (
 ) else (
     call :log "%Package% 安裝完成"
 )
-exit /b 0
-
-:showHeader
-echo.
-echo Reinstall 任務：%~1
-echo 請勿關閉此視窗，完成後會自動關閉。
-echo 日誌：%Log%
-echo.
+echo(
 exit /b 0
 
 :log
@@ -6370,25 +6391,33 @@ exit /b 0
 
 :install
 title Reinstall - 安裝 Microsoft 365 Apps
-call :showHeader "安裝 Microsoft 365 Apps"
+echo(
+echo Reinstall 任務：安裝 Microsoft 365 Apps
+echo 請勿關閉此視窗，完成後會自動關閉。
+echo 日誌：%Log%
+echo(
 call :log "請勿關閉此視窗，安裝完成後會自動關閉。"
 call :log "開始安裝 Microsoft 365 Apps"
+call :showProgress 0 PrepareOffice
 set "WorkDir=%ProgramData%\reinstall-office365"
 set "OfficeSetup=%WorkDir%\OfficeSetup.exe"
 set "ConfigXml=%WorkDir%\office365-configuration.xml"
 
 if not exist "%WorkDir%" mkdir "%WorkDir%" >>"%Log%" 2>&1
 
+call :showProgress 15 DownloadOfficeSetup
 call :downloadOfficeSetup
 if errorlevel 1 (
     call :finishWithError 1
     exit /b 1
 )
 
-call :log "Writing Microsoft 365 Apps configuration."
+call :showProgress 40 WriteOfficeConfig
+call :log "正在寫入 Microsoft 365 Apps 組態"
 call :writeConfig
 
-call :log "Running Microsoft 365 Apps setup. This can take a while."
+call :showProgress 55 RunOfficeSetup
+call :log "正在執行 Microsoft 365 Apps 安裝，這可能需要一些時間"
 start /wait "" "%OfficeSetup%" /configure "%ConfigXml%" >>"%Log%" 2>&1
 set "ExitCode=%ERRORLEVEL%"
 if not "%ExitCode%"=="0" (
@@ -6397,11 +6426,13 @@ if not "%ExitCode%"=="0" (
     exit /b %ExitCode%
 )
 
+call :showProgress 90 CleanupOffice
 call :log "Microsoft 365 Apps 安裝完成"
 call :log "清理暫存檔"
 del "%OfficeSetup%" >nul 2>&1
 del "%ConfigXml%" >nul 2>&1
 rmdir "%WorkDir%" >nul 2>&1
+call :showProgress 100 FinishOffice
 del "%~f0" >nul 2>&1
 exit /b 0
 
@@ -6424,6 +6455,38 @@ if exist "%DownloadPath%" (
 call :log "下載失敗"
 exit /b 1
 
+:showProgress
+set "ProgressPercent=%~1"
+set "ProgressKey=%~2"
+set "ProgressText=%ProgressKey%"
+if /i "%ProgressKey%"=="PrepareOffice" set "ProgressText=準備安裝 Microsoft 365 Apps"
+if /i "%ProgressKey%"=="DownloadOfficeSetup" set "ProgressText=下載 Microsoft 365 Apps 安裝程式"
+if /i "%ProgressKey%"=="WriteOfficeConfig" set "ProgressText=寫入 Microsoft 365 Apps 組態"
+if /i "%ProgressKey%"=="RunOfficeSetup" set "ProgressText=執行 Microsoft 365 Apps 安裝"
+if /i "%ProgressKey%"=="CleanupOffice" set "ProgressText=清理暫存檔"
+if /i "%ProgressKey%"=="FinishOffice" set "ProgressText=Microsoft 365 Apps 安裝完成"
+call :printProgress
+exit /b 0
+
+:printProgress
+if "%ProgressPercent%"=="" set "ProgressPercent=0"
+set /a ProgressPercent=%ProgressPercent%
+if %ProgressPercent% LSS 0 set /a ProgressPercent=0
+if %ProgressPercent% GTR 100 set /a ProgressPercent=100
+set /a ProgressBlocks=ProgressPercent / 5
+set "ProgressBar="
+for /l %%B in (1,1,20) do call :appendProgressBlock %%B
+echo [%ProgressBar%] %ProgressPercent%%% %ProgressText%
+exit /b 0
+
+:appendProgressBlock
+if %~1 LEQ %ProgressBlocks% (
+    set "ProgressBar=%ProgressBar%#"
+) else (
+    set "ProgressBar=%ProgressBar%-"
+)
+exit /b 0
+
 :writeConfig
 > "%ConfigXml%" echo ^<Configuration^>
 >> "%ConfigXml%" echo   ^<Add OfficeClientEdition="64" Channel="Current"^>
@@ -6436,12 +6499,155 @@ exit /b 1
 >> "%ConfigXml%" echo ^</Configuration^>
 exit /b 0
 
-:showHeader
-echo.
-echo Reinstall 任務：%~1
-echo 請勿關閉此視窗，完成後會自動關閉。
+:log
+echo [%DATE% %TIME%] %~1
+>>"%Log%" echo [%DATE% %TIME%] %~1
+exit /b 0
+
+:finishWithError
+set "ExitCode=%~1"
+call :log "安裝任務失敗，請查看 %Log% 取得詳細資訊"
+exit /b %ExitCode%
+EOF
+
+    unix2dos $script_path
+}
+
+create_win_post_install_powershell_script() {
+    script_path=$1
+    local ps1_path
+    local post_install_powershell_url_ps
+    local post_install_powershell_args_ps
+
+    info "Create win post-install PowerShell script"
+    assert_post_install_powershell_url_valid "$post_install_powershell_url"
+    ps1_path=$(dirname "$script_path")/windows-post-install-powershell.ps1
+    post_install_powershell_url_ps=$(printf '%s' "$post_install_powershell_url" | sed "s/'/''/g")
+    post_install_powershell_args_ps=$(printf '%s' "$post_install_powershell_args" | sed "s/'/''/g")
+
+cat <<EOF >$ps1_path
+param([switch]\$Elevated)
+
+\$ErrorActionPreference = 'Stop'
+\$psUrl = '$post_install_powershell_url_ps'
+\$psArgs = '$post_install_powershell_args_ps'
+EOF
+
+    cat <<'EOF' >>$ps1_path
+
+$logPath = Join-Path $env:SystemDrive 'windows-post-install-powershell.log'
+
+function Write-InstallLog {
+  param([string]$Message)
+  $line = "[{0}] {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Message
+  Write-Host $line
+  Add-Content -Path $logPath -Value $line -Encoding UTF8
+}
+
+function Invoke-PostInstallPowerShell {
+  Write-InstallLog "下載 post-install PowerShell：$psUrl"
+  try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
+  } catch {}
+
+  $code = Invoke-RestMethod -Uri $psUrl
+  $invokeArgs = @()
+  if (-not [string]::IsNullOrWhiteSpace($psArgs)) {
+    $invokeArgs = $psArgs -split ' '
+  }
+
+  Write-InstallLog "執行 post-install PowerShell"
+  & ([ScriptBlock]::Create($code)) @invokeArgs
+}
+
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$principal = New-Object Security.Principal.WindowsPrincipal($identity)
+$isAdmin = $principal.IsInRole(
+  [Security.Principal.WindowsBuiltInRole]::Administrator
+)
+
+if (-not $isAdmin) {
+  if ($Elevated) {
+    Write-InstallLog '已嘗試提升權限，但目前程序仍不是系統管理員。'
+    exit 1
+  }
+
+  try {
+    Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+    [System.Windows.Forms.MessageBox]::Show(
+      '接下來會跳出 Windows 使用者帳戶控制 (UAC) 確認視窗。請按「是」允許管理員權限，才能完成最後安裝步驟。',
+      '需要管理員權限',
+      [System.Windows.Forms.MessageBoxButtons]::OK,
+      [System.Windows.Forms.MessageBoxIcon]::Information
+    ) | Out-Null
+  } catch {
+    Write-Host '接下來會跳出 Windows 使用者帳戶控制 (UAC) 確認視窗，請按「是」允許管理員權限。'
+    Start-Sleep -Seconds 5
+  }
+
+  $argumentList = @(
+    '-NoLogo',
+    '-NoProfile',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    "`"$PSCommandPath`"",
+    '-Elevated'
+  )
+
+  try {
+    $process = Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru -ArgumentList $argumentList
+    exit $process.ExitCode
+  } catch {
+    Write-InstallLog '使用者未允許管理員權限，最後安裝步驟未執行。'
+    exit 1
+  }
+}
+
+try {
+  Invoke-PostInstallPowerShell
+  Write-InstallLog 'post-install PowerShell 執行完成。'
+  exit 0
+} catch {
+  Write-InstallLog ("post-install PowerShell 執行失敗：{0}" -f $_.Exception.Message)
+  throw
+}
+EOF
+
+    unix2dos $ps1_path
+
+cat <<'EOF' >$script_path
+@echo off
+setlocal EnableExtensions DisableDelayedExpansion
+chcp 65001 >nul 2>&1 || chcp 936 >nul 2>&1
+
+set "Log=%SystemDrive%\windows-post-install-powershell.log"
+
+if /i "%~1"=="install" goto install
+
+call :log "註冊 post-install PowerShell RunOnce 任務。"
+reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" /v "ZZZReinstallPostInstallPowerShell" /t REG_SZ /d "cmd /c %SystemDrive%\windows-post-install-powershell.bat install" /f >>"%Log%" 2>&1
+exit /b 0
+
+:install
+title Reinstall - 執行最後 PowerShell 腳本
+echo(
+echo Reinstall 任務：執行最後 PowerShell 腳本
+echo 接下來可能會要求允許系統管理員權限。
 echo 日誌：%Log%
-echo.
+echo(
+call :log "開始執行 post-install PowerShell"
+powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%SystemDrive%\windows-post-install-powershell.ps1" >>"%Log%" 2>&1
+set "ExitCode=%ERRORLEVEL%"
+if not "%ExitCode%"=="0" (
+    call :log "post-install PowerShell 執行失敗，錯誤碼：%ExitCode%"
+    call :finishWithError %ExitCode%
+    exit /b %ExitCode%
+)
+
+call :log "post-install PowerShell 執行完成"
+del "%SystemDrive%\windows-post-install-powershell.ps1" >nul 2>&1
+del "%~f0" >nul 2>&1
 exit /b 0
 
 :log
