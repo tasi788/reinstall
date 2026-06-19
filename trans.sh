@@ -6253,42 +6253,42 @@ set "Log=%SystemDrive%\windows-install-software.log"
 
 if /i "%~1"=="install" goto install
 
-call :log "Register winget RunOnce."
+call :log "註冊 winget RunOnce 任務。"
 reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" /v "ReinstallInstallSoftware" /t REG_SZ /d "cmd /c %SystemDrive%\windows-install-software.bat install" /f >>"%Log%" 2>&1
 exit /b 0
 
 :install
-title Reinstall - Installing software
-call :showHeader "Installing software with winget"
-call :log "Start winget installs."
-call :log "Waiting for winget to become available."
+title Reinstall - 正在安裝軟體（winget）
+call :showHeader "使用 winget 安裝軟體"
+call :log "開始執行 winget 安裝"
+call :log "等待 winget 可用"
 call :waitWinget
 if errorlevel 1 (
-    call :log "winget not found."
+    call :log "找不到 winget，稍後再試"
     call :finishWithError 1
     exit /b 1
 )
 
 set "WingetAcceptSourceArg="
 winget install --help | findstr /I /C:"--accept-source-agreements" >nul 2>&1 && set "WingetAcceptSourceArg=--accept-source-agreements"
-call :log "Updating winget source."
+call :log "更新 winget 來源"
 winget source update --name winget >>"%Log%" 2>&1
 if errorlevel 1 (
-    call :log "winget source update failed. Continuing with package installs."
+    call :log "更新 winget 來源失敗，繼續進行軟體安裝"
 )
 
 for /f "usebackq delims=" %%P in ("%SystemDrive%\windows-install-software.txt") do (
     if not "%%P"=="" call :installPackage "%%P"
 )
 
-call :log "Finished winget installs."
+call :log "winget 安裝完成"
 del "%SystemDrive%\windows-install-software.txt" >nul 2>&1
 del "%~f0" >nul 2>&1
 exit /b 0
 
 :waitWinget
 for /l %%I in (1,1,30) do (
-    call :log "Checking winget availability, attempt %%I of 30."
+    call :log "第 %%I 次檢查 winget 可用，共 30 次"
     winget --version >>"%Log%" 2>&1 && exit /b 0
     powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe" >>"%Log%" 2>&1
     winget --version >>"%Log%" 2>&1 && exit /b 0
@@ -6298,32 +6298,32 @@ exit /b 1
 
 :installPackage
 set "Package=%~1"
-call :log "Installing %Package%."
+call :log "開始安裝 %Package%"
 if defined WingetAcceptSourceArg (
     winget install --id "%Package%" --exact --source winget --silent --accept-package-agreements %WingetAcceptSourceArg% --disable-interactivity >>"%Log%" 2>&1
     if errorlevel 1 (
-        call :log "Exact package id failed for %Package%; trying winget search."
+        call :log "精準 ID 安裝 %Package% 失敗，改用 winget 搜尋"
         winget install "%Package%" --source winget --silent --accept-package-agreements %WingetAcceptSourceArg% --disable-interactivity >>"%Log%" 2>&1
     )
 ) else (
     winget install --id "%Package%" --exact --source winget --silent --accept-package-agreements --disable-interactivity >>"%Log%" 2>&1
     if errorlevel 1 (
-        call :log "Exact package id failed for %Package%; trying winget search."
+        call :log "精準 ID 安裝 %Package% 失敗，改用 winget 搜尋"
         winget install "%Package%" --source winget --silent --accept-package-agreements --disable-interactivity >>"%Log%" 2>&1
     )
 )
 if errorlevel 1 (
-    call :log "Failed %Package%."
+    call :log "%Package% 安裝失敗"
 ) else (
-    call :log "Installed %Package%."
+    call :log "%Package% 安裝完成"
 )
 exit /b 0
 
 :showHeader
 echo.
-echo Reinstall task: %~1
-echo Please keep this window open. It will close automatically when finished.
-echo Log: %Log%
+echo Reinstall 任務：%~1
+echo 請保持此視窗開啟，完成後會自動關閉
+echo 日誌：%Log%
 echo.
 exit /b 0
 
@@ -6334,7 +6334,7 @@ exit /b 0
 
 :finishWithError
 set "ExitCode=%~1"
-call :log "Install task failed. See %Log% for details."
+call :log "安裝任務失敗，請查看 %Log% 取得詳細資訊"
 exit /b %ExitCode%
 EOF
 
@@ -6361,14 +6361,14 @@ set "Log=%SystemDrive%\windows-install-office365.log"
 
 if /i "%~1"=="install" goto install
 
-call :log "Register Microsoft 365 Apps RunOnce."
+call :log "註冊 Microsoft 365 Apps RunOnce 任務。"
 reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce" /v "ReinstallInstallOffice365" /t REG_SZ /d "cmd /c %SystemDrive%\windows-install-office365.bat install" /f >>"%Log%" 2>&1
 exit /b 0
 
 :install
-title Reinstall - Installing Microsoft 365 Apps
-call :showHeader "Installing Microsoft 365 Apps"
-call :log "Start Microsoft 365 Apps install."
+title Reinstall - 安裝 Microsoft 365 Apps
+call :showHeader "安裝 Microsoft 365 Apps"
+call :log "開始安裝 Microsoft 365 Apps"
 set "WorkDir=%ProgramData%\reinstall-office365"
 set "OfficeSetup=%WorkDir%\OfficeSetup.exe"
 set "ConfigXml=%WorkDir%\office365-configuration.xml"
@@ -6388,13 +6388,13 @@ call :log "Running Microsoft 365 Apps setup. This can take a while."
 start /wait "" "%OfficeSetup%" /configure "%ConfigXml%" >>"%Log%" 2>&1
 set "ExitCode=%ERRORLEVEL%"
 if not "%ExitCode%"=="0" (
-    call :log "Microsoft 365 Apps install failed: %ExitCode%."
+    call :log "Microsoft 365 Apps 安裝失敗，錯誤碼：%ExitCode%"
     call :finishWithError %ExitCode%
     exit /b %ExitCode%
 )
 
-call :log "Finished Microsoft 365 Apps install."
-call :log "Cleaning up temporary files."
+call :log "Microsoft 365 Apps 安裝完成"
+call :log "清理暫存檔"
 del "%OfficeSetup%" >nul 2>&1
 del "%ConfigXml%" >nul 2>&1
 rmdir "%WorkDir%" >nul 2>&1
@@ -6404,20 +6404,20 @@ exit /b 0
 :downloadOfficeSetup
 set "DownloadUrl=%OfficeSetupUrl%"
 set "DownloadPath=%OfficeSetup%"
-call :log "Downloading Microsoft 365 Apps setup."
+call :log "下載 Microsoft 365 Apps 安裝程式"
 powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072 } catch {}; (New-Object Net.WebClient).DownloadFile($env:DownloadUrl, $env:DownloadPath)" >>"%Log%" 2>&1
 if exist "%DownloadPath%" (
-    call :log "Downloaded Microsoft 365 Apps setup."
+    call :log "Microsoft 365 Apps 安裝程式下載完成"
     exit /b 0
 )
 
 certutil -urlcache -f -split "%DownloadUrl%" "%DownloadPath%" >>"%Log%" 2>&1
 if exist "%DownloadPath%" (
-    call :log "Downloaded Microsoft 365 Apps setup."
+    call :log "Microsoft 365 Apps 安裝程式下載完成"
     exit /b 0
 )
 
-call :log "Download failed."
+call :log "下載失敗"
 exit /b 1
 
 :writeConfig
@@ -6434,9 +6434,9 @@ exit /b 0
 
 :showHeader
 echo.
-echo Reinstall task: %~1
-echo Please keep this window open. It will close automatically when finished.
-echo Log: %Log%
+echo Reinstall 任務：%~1
+echo 請保持此視窗開啟，完成後會自動關閉
+echo 日誌：%Log%
 echo.
 exit /b 0
 
@@ -6447,7 +6447,7 @@ exit /b 0
 
 :finishWithError
 set "ExitCode=%~1"
-call :log "Install task failed. See %Log% for details."
+call :log "安裝任務失敗，請查看 %Log% 取得詳細資訊"
 exit /b %ExitCode%
 EOF
 
