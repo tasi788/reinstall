@@ -6545,7 +6545,7 @@ function Write-InstallLog {
 }
 
 function Invoke-PostInstallPowerShell {
-  Write-InstallLog "下載 post-install PowerShell：$psUrl"
+  Write-InstallLog "Downloading post-install PowerShell: $psUrl"
   try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
   } catch {}
@@ -6556,60 +6556,46 @@ function Invoke-PostInstallPowerShell {
     $invokeArgs = $psArgs -split ' '
   }
 
-  Write-InstallLog "執行 post-install PowerShell"
+  Write-InstallLog "Running post-install PowerShell"
   & ([ScriptBlock]::Create($code)) @invokeArgs
 }
 
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-$principal = New-Object Security.Principal.WindowsPrincipal($identity)
-$isAdmin = $principal.IsInRole(
-  [Security.Principal.WindowsBuiltInRole]::Administrator
-)
+$principal = New-Object Security.Principal.WindowsPrincipal -ArgumentList $identity
+$isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 if (-not $isAdmin) {
   if ($Elevated) {
-    Write-InstallLog '已嘗試提升權限，但目前程序仍不是系統管理員。'
+    Write-InstallLog 'Elevation was requested, but the current process is still not administrator.'
     exit 1
   }
 
   try {
     Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
-    [System.Windows.Forms.MessageBox]::Show(
-      '接下來會跳出 Windows 使用者帳戶控制 (UAC) 確認視窗。請按「是」允許管理員權限，才能完成最後安裝步驟。',
-      '需要管理員權限',
-      [System.Windows.Forms.MessageBoxButtons]::OK,
-      [System.Windows.Forms.MessageBoxIcon]::Information
-    ) | Out-Null
+    [void][System.Windows.Forms.MessageBox]::Show('Administrator permission is required. Please click Yes in the next UAC prompt to finish post-install steps.', 'Administrator permission required', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
   } catch {
-    Write-Host '接下來會跳出 Windows 使用者帳戶控制 (UAC) 確認視窗，請按「是」允許管理員權限。'
+    Write-Host 'Administrator permission is required. Please click Yes in the next UAC prompt.'
     Start-Sleep -Seconds 5
   }
 
-  $argumentList = @(
-    '-NoLogo',
-    '-NoProfile',
-    '-ExecutionPolicy',
-    'Bypass',
-    '-File',
-    "`"$PSCommandPath`"",
-    '-Elevated'
-  )
+  $scriptPath = $MyInvocation.MyCommand.Path
+  $argumentList = '-NoLogo -NoProfile -ExecutionPolicy Bypass -File "' + $scriptPath + '" -Elevated'
 
   try {
     $process = Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru -ArgumentList $argumentList
     exit $process.ExitCode
   } catch {
-    Write-InstallLog '使用者未允許管理員權限，最後安裝步驟未執行。'
+    Write-InstallLog 'Administrator permission was not allowed. Post-install step was not executed.'
     exit 1
   }
 }
 
 try {
   Invoke-PostInstallPowerShell
-  Write-InstallLog 'post-install PowerShell 執行完成。'
+  Write-InstallLog 'Post-install PowerShell completed.'
   exit 0
 } catch {
-  Write-InstallLog ("post-install PowerShell 執行失敗：{0}" -f $_.Exception.Message)
+  Write-InstallLog ("Post-install PowerShell failed: {0}" -f $_.Exception.Message)
   throw
 }
 EOF
