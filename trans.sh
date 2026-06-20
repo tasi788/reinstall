@@ -6623,7 +6623,7 @@ echo 接下來可能會要求允許系統管理員權限。
 echo 日誌：%Log%
 echo(
 call :log "開始執行 post-install PowerShell"
-powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%SystemDrive%\windows-post-install-powershell.ps1" >>"%Log%" 2>&1
+powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%SystemDrive%\windows-post-install-powershell.ps1"
 set "ExitCode=%ERRORLEVEL%"
 if not "%ExitCode%"=="0" (
     call :log "post-install PowerShell 執行失敗，錯誤碼：%ExitCode%"
